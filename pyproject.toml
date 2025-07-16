@@ -1,0 +1,28 @@
+[project]
+name = "telegram-bot"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "python-telegram-bot==22.2",
+    "aiohttp==3.12.14",
+    "fastapi==0.116.1",
+    "uvicorn==0.35.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "N", "UP", "C90"]
+ignore = ["E501"]  # Line too long (handled by formatter)
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
