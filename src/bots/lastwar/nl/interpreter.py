@@ -1,3 +1,5 @@
+"""Natural language command interpreter for Last War bot using LLM and LangGraph."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -7,11 +9,14 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field, SecretStr
 
-from bot.config import config
-from bot.models import Kind
+from src.config import config
+
+from ..models import Kind
 
 
 class ParsedCommand(BaseModel):
+    """Structured command parsed from natural language input."""
+
     kind: Kind | None = Field(
         default=None,
         description="Task type, or null if it cannot be determined.",
@@ -28,16 +33,16 @@ class ParsedCommand(BaseModel):
     )
 
     def to_timedelta(self) -> timedelta:
+        """Convert parsed time components to timedelta."""
         return timedelta(days=self.days, hours=self.hours, minutes=self.minutes)
 
     def is_zero(self) -> bool:
+        """Check if the duration is zero."""
         return self.days == 0 and self.hours == 0 and self.minutes == 0
 
 
 class NLState(BaseModel):
-    """
-    LangGraph state for natural-language interpretation.
-    """
+    """LangGraph state for natural-language interpretation."""
 
     text: str
     parsed: ParsedCommand | None = None
@@ -49,6 +54,7 @@ class NLState(BaseModel):
 
 
 def _build_llm() -> ChatOpenAI:
+    """Build OpenAI LLM client."""
     model = config.OPENAI_MODEL
     key = config.OPENAI_API_KEY
     return ChatOpenAI(
@@ -116,9 +122,7 @@ _structured_llm = _llm.with_structured_output(ParsedCommand)
 
 
 async def interpret_node(state: NLState) -> NLState:
-    """
-    Call the LLM with structured output to interpret the user's text.
-    """
+    """Call the LLM with structured output to interpret the user's text."""
     raw = await _structured_llm.ainvoke(
         [
             ("system", SYSTEM_PROMPT),
@@ -132,10 +136,7 @@ async def interpret_node(state: NLState) -> NLState:
 
 
 def validate_node(state: NLState) -> NLState:
-    """
-    Validate and normalize the parsed command.
-    If invalid, set an error message.
-    """
+    """Validate and normalize the parsed command."""
     if state.parsed is None:
         state.error = "no_parsed_command"
         return state
@@ -153,6 +154,7 @@ def validate_node(state: NLState) -> NLState:
 
 
 def _build_graph():
+    """Build the LangGraph workflow for NL interpretation."""
     workflow = StateGraph(NLState)
     workflow.add_node("interpret", interpret_node)
     workflow.add_node("validate", validate_node)

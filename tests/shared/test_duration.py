@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from bot.utils.duration import format_duration, parse_duration
+from src.shared.utils.duration import format_duration, parse_duration
 
 
 @pytest.mark.parametrize(

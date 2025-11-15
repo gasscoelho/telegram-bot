@@ -6,10 +6,18 @@ logger = logging.getLogger(__name__)
 
 
 class WebhookNotifier:
+    """HTTP webhook notifier for sending messages to external services."""
+
     def __init__(self, webhook_url: str | None):
         self.webhook_url = webhook_url
 
     async def post(self, payload: dict) -> bool:
+        """
+        Post a JSON payload to the configured webhook URL.
+
+        Returns:
+            bool: True if the request was successful (2xx status), False otherwise.
+        """
         if not self.webhook_url:
             logger.warning("WebhookNotifier: no URL configured")
             return False

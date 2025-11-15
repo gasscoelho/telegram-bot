@@ -7,9 +7,9 @@ from fastapi import FastAPI, Request, Response
 from telegram import Update
 from telegram.ext import Application
 
-from bot.config import config
-from bot.duolingo import register as register_duolingo
-from bot.lastwar import register as register_lastwar
+from src.bots.duolingo.handlers import register as register_duolingo
+from src.bots.lastwar.handlers import register as register_lastwar
+from src.config import config
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -56,7 +56,7 @@ async def process_update(request: Request):
 if __name__ == "__main__":
     logger.info("Starting Bots with FastAPI...")
     uvicorn.run(
-        "main:app",
+        "src.main:app",
         host=config.FASTAPI_HOST,
         port=config.FASTAPI_PORT,
         reload=False,

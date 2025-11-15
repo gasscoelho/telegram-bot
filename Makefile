@@ -10,4 +10,4 @@ test-stop: ## Stop on first failure
 	pytest -x -v --tb=short
 
 start: ## Run the Telegram bot application
-	python main.py
+	python -m src.main
