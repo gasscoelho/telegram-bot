@@ -10,6 +10,7 @@ from telegram import Update
 from telegram.ext import Application
 
 from bot.duolingo import register as register_duolingo
+from bot.lastwar import register as register_lastwar
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -42,6 +43,7 @@ ptb = (
 
 # Register bot handlers
 register_duolingo(ptb, Config.DUOLINGO_WEBHOOK_URL)
+register_lastwar(ptb)
 
 
 @asynccontextmanager
