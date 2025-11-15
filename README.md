@@ -5,13 +5,13 @@
 
 ### Setup
 
-1. **Create virtual environment**
+**1. Create virtual environment**
 ```bash
 uv venv .venv --python=$(which python3.13)
 source .venv/bin/activate
 ```
 
-2. **Install dependencies**
+**2. Install dependencies**
 ```bash
 # Production dependencies
 uv sync
@@ -20,7 +20,15 @@ uv sync
 uv sync --group dev
 ```
 
-3. **Configure environment variables**
+**3. Configure environment variables**
+
+Copy the example file:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` with the bot credentials and webhook URLs.
 
 ### Running the Bot
 
@@ -28,7 +36,6 @@ uv sync --group dev
 # Terminal 1: Start ngrok (Development Only)
 ngrok http 8000
 
-# Terminal 2: Update webhook URL and run bot
-export TELEGRAM_WEBHOOK_URL="https://your-ngrok-url.ngrok.io/webhook"
+# Terminal 2: Run the bot
 python main.py
 ```
