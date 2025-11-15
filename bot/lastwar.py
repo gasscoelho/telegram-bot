@@ -21,6 +21,8 @@ from telegram.ext import (
 )
 from telegram.helpers import escape_markdown
 
+from bot.lastwar_nl import interpret_natural_command
+from bot.models import Kind
 from bot.utils.duration import format_duration, parse_duration
 
 logger = logging.getLogger(__name__)
@@ -39,18 +41,6 @@ class Messages(Enum):
     SERVER_TIME_ASK = "Inform the server time shown in-game:"
     SERVER_TIME_EXAMPLE = "(e.g., 8-11-2025 17:09 or 17:09)"
     CUSTOM_TASK_ASK = "Inform the task name:"
-
-
-# What the user selected
-class Kind(Enum):
-    TRUCK = "truck"
-    BUILD = "build"
-    RESEARCH = "research"
-    TRAIN = "train"
-    MINISTRY = "ministry"
-    CUSTOM = "custom"
-    LIST = "list"
-    CANCEL = "cancel"
 
 
 @dataclass
@@ -238,6 +228,24 @@ async def send_invalid_duration_prompt(
         store=False,
     )
     return ENTERING_DURATION
+
+
+async def send_invalid_nl_prompt(
+    messenger: Messenger, update: Update, error_msg: str | None = None
+):
+    if error_msg:
+        prompt = (
+            f"There was an error while processing your text"
+            f":\n\n{messenger.escape_md_v2(error_msg)}"
+        )
+    else:
+        prompt = f"I couldn’t understand that{messenger.escape_md_v2('. Please, try again.')}"
+    await messenger.send(
+        update,
+        msg=prompt,
+        store=False,
+    )
+    return CHOOSING
 
 
 async def ask_heads_up_prompt(
@@ -451,6 +459,38 @@ async def on_enter_heads_up(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def on_natural_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg or not msg.text:
+        return CHOOSING
+
+    messenger = Messenger(context=context)
+    text = msg.text.strip()
+
+    try:
+        parsed = await interpret_natural_command(text)
+    except Exception as e:
+        return await send_invalid_nl_prompt(
+            messenger,
+            update=update,
+            error_msg=str(e),
+        )
+
+    if not parsed:
+        return await send_invalid_nl_prompt(messenger, update=update)
+
+    user_ctx = _get_user_ctx(context)
+    user_ctx.kind = parsed.kind or Kind.CUSTOM
+    user_ctx.task_name = parsed.task_name
+    user_ctx.value = parsed.to_timedelta()
+
+    # TODO: Consider adding a confirmation step before going to the next step
+
+    # Skip the “choose kind” and “enter duration” steps,
+    # and jump straight to the heads-up state.
+    return await ask_heads_up_prompt(messenger, update=update)
+
+
 async def on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if hasattr(context, "user_data") and isinstance(context.user_data, dict):
         context.user_data.pop("lw_ctx", None)
@@ -469,7 +509,8 @@ def register(app: Application):
         entry_points=[CommandHandler("lw", on_start)],
         states={
             CHOOSING: [
-                CallbackQueryHandler(on_choose, pattern=r"^lw:(?!dur:|lead_time:)")
+                CallbackQueryHandler(on_choose, pattern=r"^lw:(?!dur:|lead_time:)"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, on_natural_command),
             ],
             ENTERING_CUSTOM_TASK: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_enter_custom_task),
