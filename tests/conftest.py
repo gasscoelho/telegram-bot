@@ -1,9 +1,17 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telegram import Bot, CallbackQuery, Chat, Message, Update, User
+
+
+@pytest.fixture(autouse=True)
+def mock_scheduler():
+    """Mock the scheduler for all tests."""
+    with patch("src.bots.lastwar.handlers.schedule_reminder") as mock:
+        mock.return_value = (["job_id_1", "job_id_2"], "Truck #456")
+        yield mock
 
 
 @pytest.fixture

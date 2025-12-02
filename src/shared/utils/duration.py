@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 __all__ = [
     "parse_duration",
     "format_duration",
+    "as_apscheduler_date_args",
 ]
 
 # Longest → shortest to ensure full consumption
@@ -122,57 +123,26 @@ def format_duration(td: timedelta) -> str:
     return " ".join(parts)
 
 
-# TODO: Review apscheduler helpers
-# def as_apscheduler_interval_args(td: timedelta) -> dict[str, int | str]:
-#     """
-#     Convert timedelta to APScheduler 'interval' trigger args.
+def as_apscheduler_date_args(
+    td: timedelta,
+    *,  # Everything after this MUST be keyword-only
+    now: datetime | None = None,
+    tz: timezone | None = None,
+) -> dict[str, datetime | str]:
+    """
+    Convert a relative timedelta into APScheduler 'date' trigger args (run once).
 
-#     Example:
-#         scheduler.add_job(func, **as_apscheduler_interval_args(td))
-#     """
-#     if td.total_seconds() <= 0:
-#         raise ValueError("Interval must be positive")
+    Example:
+        scheduler.add_job(func, **as_apscheduler_date_args(td, tz=timezone.utc))
 
-#     total_seconds = int(td.total_seconds())
-#     days, rem = divmod(total_seconds, 86400)
-#     hours, rem = divmod(rem, 3600)
-#     minutes, seconds = divmod(rem, 60)
+    If tz is provided, 'now' will be interpreted in that timezone (default: UTC).
+    """
+    if td.total_seconds() <= 0:
+        raise ValueError("Run date offset must be positive")
 
-#     args: dict[str, int | str] = {"trigger": "interval"}
-#     if days:
-#         args["days"] = days
-#     if hours:
-#         args["hours"] = hours
-#     if minutes:
-#         args["minutes"] = minutes
-#     if seconds:
-#         args["seconds"] = seconds
-
-#     # If everything zero (unlikely given positive td), default to seconds=1
-#     if len(args) == 1:
-#         args["seconds"] = 1
-#     return args
-
-
-# def as_apscheduler_date_args(
-#     td: timedelta,
-#     *,
-#     now: datetime | None = None,
-#     tz: timezone | None = None,
-# ) -> dict[str, datetime | str]:
-#     """
-#     Convert a relative timedelta into APScheduler 'date' trigger args (run once).
-#     Example:
-#         scheduler.add_job(func, **as_apscheduler_date_args(td, tz=timezone.utc))
-
-#     If tz is provided, 'now' will be interpreted in that timezone (default: UTC).
-#     """
-#     if td.total_seconds() <= 0:
-#         raise ValueError("Run date offset must be positive")
-
-#     if now is None:
-#         if tz is None:
-#             tz = UTC
-#         now = datetime.now(tz)
-#     run_at = now + td
-#     return {"trigger": "date", "run_date": run_at}
+    if now is None:
+        if tz is None:
+            tz = UTC
+        now = datetime.now(tz)
+    run_at = now + td
+    return {"trigger": "date", "run_date": run_at}

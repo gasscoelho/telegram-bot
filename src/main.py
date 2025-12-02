@@ -9,6 +9,7 @@ from telegram.ext import Application
 
 from src.bots.duolingo.handlers import register as register_duolingo
 from src.bots.lastwar.handlers import register as register_lastwar
+from src.bots.lastwar.scheduler import init_scheduler
 from src.config import config
 
 logging.basicConfig(
@@ -34,11 +35,21 @@ register_lastwar(ptb)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Initialize and start scheduler
+    scheduler = init_scheduler()
+    scheduler.start()
+    logger.info("APScheduler started")
+
+    # Set up Telegram webhook and start bot
     await ptb.bot.setWebhook(config.TELEGRAM_WEBHOOK_URL)
     async with ptb:
         await ptb.start()
         yield
         await ptb.stop()
+
+    # Shutdown scheduler
+    scheduler.shutdown()
+    logger.info("APScheduler stopped")
 
 
 # Initialize FastAPI app

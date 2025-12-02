@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
 
+from pydantic import BaseModel
 from telegram.ext import ContextTypes
 
 
@@ -26,6 +27,18 @@ class LwContext:
     task_name: str | None = None  # free-form label
     value: timedelta | None = None  # duration (e.g., 2h) or server time (e.g., 17:09:08)
     lead_time: str | None = None  # early ping (e.g., 5m)
+
+
+class ReminderRequest(BaseModel):
+    """Request to schedule a reminder."""
+
+    user_id: int
+    chat_id: int
+    kind: Kind
+    task_name: str | None
+    duration: timedelta
+    lead_time: str | None = None
+    webhook_url: str | None = None
 
 
 def get_user_context(context: ContextTypes.DEFAULT_TYPE) -> LwContext:

@@ -30,8 +30,14 @@ from .conversation.states import (
     ENTERING_HEADS_UP,
 )
 from .messages import Messages, Messenger
-from .models import Kind, get_user_context
+from .models import Kind, ReminderRequest, get_user_context
 from .nl.interpreter import interpret_natural_command
+from .scheduler import (
+    cancel_user_jobs,
+    format_job_display,
+    list_user_jobs,
+    schedule_reminder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +84,32 @@ async def on_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_ctx = get_user_context(context)
     messenger = Messenger(context=context)
 
-    # TODO: Complete implementation -- It should list the scheduled reminders
     if tag == "list":
         await messenger.append_and_close(store_key="menu", append_line="List")
-        await messenger.send(update, msg="📋 List is a stub in this MVP.")
-        return CHOOSING
+        user_id = update.effective_user.id if update.effective_user else 0
+        chat_id = update.effective_chat.id if update.effective_chat else 0
+        jobs = list_user_jobs(user_id, chat_id)
+        if not jobs:
+            await messenger.send(update, msg="No active reminders")
+        else:
+            lines = ["*Active Reminders:*\n"]
+            for i, job in enumerate(jobs, 1):
+                display = format_job_display(job["id"], job["next_run_time"])
+                lines.append(messenger.escape_md_v2(f"{i}. {display}"))
+            await messenger.send(update, msg="\n".join(lines))
+        return ConversationHandler.END
 
-    # TODO: Complete implementation -- It should unschedule a reminder
     if tag == "cancel":
         await messenger.append_and_close(store_key="menu", append_line="Cancel")
-        await messenger.send(update, msg="🗑 Cancel is a stub in this MVP.")
-        return CHOOSING
+        user_id = update.effective_user.id if update.effective_user else 0
+        chat_id = update.effective_chat.id if update.effective_chat else 0
+        count = cancel_user_jobs(user_id, chat_id)
+        if count == 0:
+            await messenger.send(update, msg="No reminders to cancel")
+        else:
+            plural = "reminder" if count == 1 else "reminders"
+            await messenger.send(update, msg=f"Cancelled {count} {plural}")
+        return ConversationHandler.END
 
     kind_mapping = {
         "truck": Kind.TRUCK,
@@ -186,19 +207,41 @@ async def on_enter_heads_up(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messenger = Messenger(context=context)
     await messenger.append_and_close(store_key="lead", append_line=f"`{headsup}`")
 
+    # Get user and chat IDs for scheduling
+    user_id = update.effective_user.id if update.effective_user else 0
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+
+    # Schedule the reminder
+    task_label = "Unknown"
+    if user_ctx.value and user_ctx.kind:
+        try:
+            request = ReminderRequest(
+                user_id=user_id,
+                chat_id=chat_id,
+                kind=user_ctx.kind,
+                task_name=user_ctx.task_name,
+                duration=user_ctx.value,
+                lead_time=user_ctx.lead_time,
+                webhook_url=None,  # TODO: Use config.LASTWAR_WEBHOOK_URL when ready
+            )
+            job_ids, task_label = schedule_reminder(request)
+            logger.info(f"Scheduled {len(job_ids)} job(s): {job_ids}")
+        except Exception as e:
+            logger.error(f"Failed to schedule reminder: {e}")
+            await messenger.send(
+                update,
+                msg="Failed to schedule reminder. Please try again.",
+            )
+            return ConversationHandler.END
+
     # Prepare summary
-    kind_label = "Unknown"
-    if user_ctx.kind == Kind.CUSTOM and user_ctx.task_name:
-        kind_label = user_ctx.task_name
-    elif user_ctx.kind:
-        kind_label = user_ctx.kind.value
     value = format_duration(user_ctx.value) if user_ctx.value else "N/A"
     lead_time = user_ctx.lead_time or "None"
 
     # Build summary
     summary = (
-        "✅ Scheduled (MVP)\n"
-        f"• Task: {kind_label.capitalize()}\n"
+        "✅ Scheduled\n"
+        f"• Task: {task_label}\n"
         f"• Duration: {value}\n"
         f"• Heads-up: {lead_time}\n"
     )

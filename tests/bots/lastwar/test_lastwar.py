@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -8,7 +8,7 @@ from telegram.ext import ConversationHandler
 from src.bots.lastwar import handlers
 from src.bots.lastwar.conversation import states
 from src.bots.lastwar.messages import Messages
-from src.bots.lastwar.models import Kind, get_user_context
+from src.bots.lastwar.models import Kind, ReminderRequest, get_user_context
 from src.bots.lastwar.nl.interpreter import ParsedCommand
 from tests.conftest import make_callback_query_update, make_message_update
 
@@ -215,7 +215,9 @@ async def test_on_enter_heads_up_skip(mock_answer, fake_context, user, chat):
 
 @pytest.mark.asyncio
 @patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
-async def test_full_flow_truck_with_text_input(mock_answer, fake_context, user, chat):
+async def test_full_flow_truck_with_text_input(
+    mock_answer, mock_scheduler, fake_context, user, chat
+):
     """Test complete flow: start -> truck -> duration text -> heads-up -> complete."""
     # Step 1: Start
     update = make_message_update("/lw", user=user, chat=chat, bot=fake_context.bot)
@@ -253,6 +255,21 @@ async def test_full_flow_truck_with_text_input(mock_answer, fake_context, user, 
     )
     assert "lw_ctx" not in fake_context.user_data, (
         "Context should be cleared after completion"
+    )
+
+    # Verify schedule_reminder was called with correct ReminderRequest
+    mock_scheduler.assert_called_once()
+    call_args = mock_scheduler.call_args
+    request: ReminderRequest = call_args.args[0]
+
+    assert request.user_id == user.id, "Should schedule reminder for correct user"
+    assert request.chat_id == chat.id, "Should schedule reminder for correct chat"
+    assert request.kind == Kind.TRUCK, "Should schedule reminder with correct task kind"
+    assert request.duration == timedelta(minutes=45), (
+        "Should schedule reminder with correct duration"
+    )
+    assert request.lead_time == "3m", (
+        "Should schedule reminder with correct heads-up time"
     )
 
 
@@ -306,3 +323,126 @@ async def test_natural_language_command(fake_context, user, chat):
         assert user_ctx.value == timedelta(hours=2, minutes=30), (
             "Should extract and parse duration from natural language input"
         )
+
+
+@pytest.mark.asyncio
+@patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
+async def test_on_choose_list_with_no_reminders(mock_answer, fake_context, user, chat):
+    """Test 'list' option when there are no active reminders."""
+    with patch("src.bots.lastwar.handlers.list_user_jobs") as mock_list:
+        mock_list.return_value = []
+        update = make_callback_query_update(
+            "lw:list", user=user, chat=chat, message_text=Messages.WELCOME.value
+        )
+        fake_context.bot.send_message = AsyncMock()
+
+        next_state = await handlers.on_choose(update, fake_context)
+
+        assert next_state == ConversationHandler.END
+        mock_list.assert_called_once_with(user.id, chat.id)
+        fake_context.bot.send_message.assert_called()
+        _, kwargs = fake_context.bot.send_message.call_args
+        assert "No active reminders" in kwargs["text"]
+
+
+@pytest.mark.asyncio
+@patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
+async def test_on_choose_list_with_reminders(mock_answer, fake_context, user, chat):
+    """Test 'list' option displays active reminders."""
+
+    with (
+        patch("src.bots.lastwar.handlers.list_user_jobs") as mock_list,
+        patch("src.bots.lastwar.handlers.format_job_display") as mock_format,
+    ):
+        mock_list.return_value = [
+            {
+                "id": "lw:123:456:truck:1234567890:main",
+                "next_run_time": datetime.now(UTC),
+            },
+            {
+                "id": "lw:123:456:truck:1234567890:headsup",
+                "next_run_time": datetime.now(UTC),
+            },
+        ]
+        mock_format.side_effect = [
+            "Truck #890 - Mon 14:30",
+            "Truck #890 (heads-up) - Mon 14:25",
+        ]
+
+        update = make_callback_query_update(
+            "lw:list", user=user, chat=chat, message_text=Messages.WELCOME.value
+        )
+        fake_context.bot.send_message = AsyncMock()
+
+        next_state = await handlers.on_choose(update, fake_context)
+
+        assert next_state == ConversationHandler.END
+        mock_list.assert_called_once_with(user.id, chat.id)
+        assert mock_format.call_count == 2
+        fake_context.bot.send_message.assert_called()
+        _, kwargs = fake_context.bot.send_message.call_args
+        assert "Active Reminders" in kwargs["text"]
+
+
+@pytest.mark.asyncio
+@patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
+async def test_on_choose_cancel_with_no_reminders(
+    mock_answer, fake_context, user, chat
+):
+    """Test 'cancel' option when there are no reminders to cancel."""
+    with patch("src.bots.lastwar.handlers.cancel_user_jobs") as mock_cancel:
+        mock_cancel.return_value = 0
+        update = make_callback_query_update(
+            "lw:cancel", user=user, chat=chat, message_text=Messages.WELCOME.value
+        )
+        fake_context.bot.send_message = AsyncMock()
+
+        next_state = await handlers.on_choose(update, fake_context)
+
+        assert next_state == ConversationHandler.END
+        mock_cancel.assert_called_once_with(user.id, chat.id)
+        fake_context.bot.send_message.assert_called()
+        _, kwargs = fake_context.bot.send_message.call_args
+        assert "No reminders to cancel" in kwargs["text"]
+
+
+@pytest.mark.asyncio
+@patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
+async def test_on_choose_cancel_single_reminder(mock_answer, fake_context, user, chat):
+    """Test 'cancel' option cancels a single reminder."""
+    with patch("src.bots.lastwar.handlers.cancel_user_jobs") as mock_cancel:
+        mock_cancel.return_value = 1
+        update = make_callback_query_update(
+            "lw:cancel", user=user, chat=chat, message_text=Messages.WELCOME.value
+        )
+        fake_context.bot.send_message = AsyncMock()
+
+        next_state = await handlers.on_choose(update, fake_context)
+
+        assert next_state == ConversationHandler.END
+        mock_cancel.assert_called_once_with(user.id, chat.id)
+        fake_context.bot.send_message.assert_called()
+        _, kwargs = fake_context.bot.send_message.call_args
+        assert "Cancelled 1 reminder" in kwargs["text"]
+
+
+@pytest.mark.asyncio
+@patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
+async def test_on_choose_cancel_multiple_reminders(
+    mock_answer, fake_context, user, chat
+):
+    """Test 'cancel' option cancels multiple reminders with correct plural."""
+    with patch("src.bots.lastwar.handlers.cancel_user_jobs") as mock_cancel:
+        mock_cancel.return_value = 3
+        update = make_callback_query_update(
+            "lw:cancel", user=user, chat=chat, message_text=Messages.WELCOME.value
+        )
+        fake_context.bot.send_message = AsyncMock()
+
+        next_state = await handlers.on_choose(update, fake_context)
+
+        assert next_state == ConversationHandler.END
+        mock_cancel.assert_called_once_with(user.id, chat.id)
+        fake_context.bot.send_message.assert_called()
+        _, kwargs = fake_context.bot.send_message.call_args
+        assert "Cancelled 3 reminders" in kwargs["text"]
