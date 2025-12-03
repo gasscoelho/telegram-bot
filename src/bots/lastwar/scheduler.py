@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.shared.utils.duration import as_apscheduler_date_args, format_duration
+from src.shared.webhook import WebhookNotifier
 
 from .models import Kind, ReminderRequest
 
@@ -64,22 +65,22 @@ async def send_reminder(
     webhook_url: str | None = None,
 ) -> None:
     """
-    Send a reminder notification (mocked for now).
+    Send a reminder notification via webhook.
 
     Args:
         chat_id: Telegram chat ID to send message to
         message: Message content to send
-        webhook_url: Optional webhook URL for n8n integration
-
-    TODO: Implement actual webhook notification to n8n
+        webhook_url: Webhook URL for n8n integration
     """
-    logger.info(f"[MOCK REMINDER] chat_id={chat_id}, message={message}")
-    # Future implementation:
-    # if webhook_url:
-    #     await WebhookNotifier(webhook_url).post({
-    #         "chat_id": chat_id,
-    #         "message": message,
-    #     })
+
+    notifier = WebhookNotifier(webhook_url)
+    payload = {"chat_id": chat_id, "message": message}
+
+    success = await notifier.post(payload)
+    if success:
+        logger.info(f"Reminder sent: chat_id={chat_id}, message={message}")
+    else:
+        logger.error(f"Failed to send reminder: chat_id={chat_id}, message={message}")
 
 
 def format_task_label(kind: Kind, task_name: str | None, timestamp: int) -> str:
@@ -94,7 +95,9 @@ def format_task_label(kind: Kind, task_name: str | None, timestamp: int) -> str:
     Returns:
         Formatted task label (e.g., "Truck #456")
     """
-    base_label = task_name if kind == Kind.CUSTOM and task_name else kind.value.capitalize()
+    base_label = (
+        task_name if kind == Kind.CUSTOM and task_name else kind.value.capitalize()
+    )
     task_suffix = f"#{str(timestamp)[-3:]}"
     return f"{base_label} {task_suffix}"
 

@@ -13,6 +13,7 @@ from telegram.ext import (
     filters,
 )
 
+from src.config import config
 from src.shared.utils.duration import format_duration, parse_duration
 
 from .conversation.prompts import (
@@ -222,7 +223,7 @@ async def on_enter_heads_up(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 task_name=user_ctx.task_name,
                 duration=user_ctx.value,
                 lead_time=user_ctx.lead_time,
-                webhook_url=None,  # TODO: Use config.LASTWAR_WEBHOOK_URL when ready
+                webhook_url=config.LASTWAR_WEBHOOK_URL,
             )
             job_ids, task_label = schedule_reminder(request)
             logger.info(f"Scheduled {len(job_ids)} job(s): {job_ids}")
