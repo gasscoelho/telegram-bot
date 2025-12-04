@@ -1,6 +1,7 @@
 """Telegram handlers for Last War bot."""
 
 import logging
+from datetime import timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -14,7 +15,11 @@ from telegram.ext import (
 )
 
 from src.config import config
-from src.shared.utils.duration import format_duration, parse_duration
+from src.shared.utils.duration import (
+    format_duration,
+    parse_duration,
+    parse_server_time_to_duration,
+)
 
 from .conversation.prompts import (
     ask_custom_task_prompt,
@@ -176,7 +181,10 @@ async def on_enter_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messenger = Messenger(context=context)
     user_ctx = get_user_context(context)
     try:
-        user_ctx.value = parse_duration(duration)
+        if user_ctx.kind == Kind.MINISTRY:
+            user_ctx.value = parse_server_time_to_duration(duration)
+        else:
+            user_ctx.value = parse_duration(duration)
     except ValueError:
         return await send_invalid_duration_prompt(messenger, update=update)
 
@@ -280,10 +288,24 @@ async def on_natural_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not parsed:
         return await send_invalid_nl_prompt(messenger, update=update)
 
+    logger.info(f"NL parsed: {parsed.model_dump()}")
+
     user_ctx = get_user_context(context)
     user_ctx.kind = parsed.kind or Kind.CUSTOM
     user_ctx.task_name = parsed.task_name
-    user_ctx.value = parsed.to_timedelta()
+
+    # For ministry with server_time, convert clock time to duration
+    if parsed.server_time and user_ctx.kind == Kind.MINISTRY:
+        try:
+            base_duration = parse_server_time_to_duration(parsed.server_time)
+            # Add extra days if "tomorrow" was mentioned
+            user_ctx.value = base_duration + timedelta(days=parsed.days)
+        except ValueError:
+            return await send_invalid_nl_prompt(
+                messenger, update=update, error_msg="Invalid server time format"
+            )
+    else:
+        user_ctx.value = parsed.to_timedelta()
 
     # TODO: Consider adding a confirmation step before going to the next step
 

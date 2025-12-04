@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telegram import CallbackQuery, Message
@@ -97,6 +97,29 @@ async def test_on_choose_ministry_transitions_to_server_time(
     _, kwargs = fake_context.bot.send_message.call_args
     assert "server time" in kwargs["text"].lower(), (
         "Should ask for server time (text may be Markdown escaped)"
+    )
+
+    # Enter server time "17:09" - should calculate duration until that time
+    # NOT be treated as 17h 9m duration
+    # Mock datetime.now() to return a fixed time (14:00)
+    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=UTC)
+    with patch("src.shared.utils.duration.datetime") as mock_datetime:
+        # Mock now() to return mock_now, and astimezone() returns itself
+        mock_now_obj = MagicMock()
+        mock_now_obj.astimezone.return_value = mock_now
+        mock_datetime.now.return_value = mock_now_obj
+        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+
+        update = make_message_update(
+            "17:09", user=user, chat=chat, bot=fake_context.bot
+        )
+        fake_context.bot.send_message = AsyncMock()
+        next_state = await handlers.on_enter_duration(update, fake_context)
+        assert next_state == states.ENTERING_HEADS_UP
+
+    # Server time "17:09" with now=14:00 should be ~3h 9m, NOT 17h 9m
+    assert user_ctx.value == timedelta(hours=3, minutes=9), (
+        f"Server time '17:09' with now=14:00 should be 3h 9m. Got {user_ctx.value}."
     )
 
 
@@ -322,6 +345,87 @@ async def test_natural_language_command(fake_context, user, chat):
         )
         assert user_ctx.value == timedelta(hours=2, minutes=30), (
             "Should extract and parse duration from natural language input"
+        )
+
+
+@pytest.mark.asyncio
+async def test_natural_language_ministry_with_server_time(fake_context, user, chat):
+    """Test NL ministry input with server_time is converted to duration correctly."""
+    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=UTC)
+
+    with (
+        patch("src.bots.lastwar.handlers.interpret_natural_command") as mock_interpret,
+        patch("src.shared.utils.duration.datetime") as mock_datetime,
+    ):
+        # Mock now() to return mock_now, and astimezone() returns itself
+        mock_now_obj = MagicMock()
+        mock_now_obj.astimezone.return_value = mock_now
+        mock_datetime.now.return_value = mock_now_obj
+        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+
+        # Simulate LLM returning server_time for ministry
+        mock_interpret.return_value = ParsedCommand(
+            kind=Kind.MINISTRY,
+            task_name="ministry promotion",
+            server_time="17:09",
+            language="en",
+        )
+        update = make_message_update(
+            "I'll be promoted at 17:09",
+            user=user,
+            chat=chat,
+            bot=fake_context.bot,
+        )
+        fake_context.bot.send_message = AsyncMock()
+        next_state = await handlers.on_natural_command(update, fake_context)
+
+        assert next_state == states.ENTERING_HEADS_UP
+        user_ctx = get_user_context(fake_context)
+        assert user_ctx.kind == Kind.MINISTRY
+        # 17:09 - 14:00 = 3h 9m
+        assert user_ctx.value == timedelta(hours=3, minutes=9), (
+            f"server_time '17:09' with now=14:00 should be 3h 9m. Got {user_ctx.value}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_natural_language_ministry_tomorrow(fake_context, user, chat):
+    """Test NL ministry with 'tomorrow' adds extra day to duration."""
+    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=UTC)
+
+    with (
+        patch("src.bots.lastwar.handlers.interpret_natural_command") as mock_interpret,
+        patch("src.shared.utils.duration.datetime") as mock_datetime,
+    ):
+        # Mock now() to return mock_now, and astimezone() returns itself
+        mock_now_obj = MagicMock()
+        mock_now_obj.astimezone.return_value = mock_now
+        mock_datetime.now.return_value = mock_now_obj
+        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+
+        # LLM sets days=1 for "tomorrow"
+        mock_interpret.return_value = ParsedCommand(
+            kind=Kind.MINISTRY,
+            task_name="ministry promotion",
+            server_time="10:00",
+            days=1,
+            language="en",
+        )
+        update = make_message_update(
+            "promoted tomorrow at 10:00",
+            user=user,
+            chat=chat,
+            bot=fake_context.bot,
+        )
+        fake_context.bot.send_message = AsyncMock()
+        next_state = await handlers.on_natural_command(update, fake_context)
+
+        assert next_state == states.ENTERING_HEADS_UP
+        user_ctx = get_user_context(fake_context)
+        # 10:00 is before 14:00, so parse_server_time_to_duration wraps to tomorrow (20h)
+        # Then we add days=1, so total = 20h + 24h = 44h = 1d 20h
+        assert user_ctx.value == timedelta(days=1, hours=20), (
+            f"'tomorrow at 10:00' with now=14:00 should be 1d 20h. Got {user_ctx.value}"
         )
 
 

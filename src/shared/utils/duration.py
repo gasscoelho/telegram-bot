@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 __all__ = [
     "parse_duration",
+    "parse_server_time_to_duration",
     "format_duration",
     "as_apscheduler_date_args",
 ]
@@ -104,6 +105,71 @@ def parse_duration(duration: str) -> timedelta:
             return parsed_value
 
     raise ValueError(f"Could not parse duration: {sanitized_duration!r}")
+
+
+# Regex for server time: "17:09", "8-11-2025 17:09", "08-11-2025 17:09"
+_SERVER_TIME_RE = re.compile(
+    r"^(?:(?P<day>\d{1,2})-(?P<month>\d{1,2})-(?P<year>\d{4})\s+)?"
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2})$"
+)
+
+
+def parse_server_time_to_duration(
+    server_time_str: str,
+    *,
+    now: datetime | None = None,
+) -> timedelta:
+    """
+    Parse a server clock time and calculate duration until that time.
+
+    Accepts formats like "17:09" or "8-11-2025 17:09".
+    If only time is provided, assumes today (or tomorrow if time has passed).
+
+    Args:
+        server_time_str: Server time string (e.g., "17:09" or "8-11-2025 17:09")
+        now: Current datetime (defaults to local time)
+
+    Returns:
+        timedelta representing duration until the target server time
+
+    Raises:
+        ValueError: If the format is invalid or the target time is in the past
+    """
+    sanitized = (server_time_str or "").strip()
+    if not sanitized:
+        raise ValueError("Empty server time")
+
+    match = _SERVER_TIME_RE.match(sanitized)
+    if not match:
+        raise ValueError(f"Invalid server time format: {sanitized!r}")
+
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+
+    if hour > 23 or minute > 59:
+        raise ValueError(f"Invalid time values: {hour}:{minute}")
+
+    if now is None:
+        # Use local time since server time is typically in local timezone
+        now = datetime.now().astimezone()
+
+    # If date is provided, use it; otherwise use today/tomorrow
+    if match.group("year"):
+        day = int(match.group("day"))
+        month = int(match.group("month"))
+        year = int(match.group("year"))
+        target = datetime(year, month, day, hour, minute, tzinfo=now.tzinfo)
+    else:
+        # Time only - assume today, or tomorrow if time has passed
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+
+    duration = target - now
+    if duration.total_seconds() <= 0:
+        raise ValueError("Target time is in the past")
+
+    return duration
 
 
 def format_duration(td: timedelta) -> str:

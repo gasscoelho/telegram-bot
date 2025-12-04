@@ -27,6 +27,10 @@ class ParsedCommand(BaseModel):
     days: int = Field(default=0, ge=0)
     hours: int = Field(default=0, ge=0)
     minutes: int = Field(default=0, ge=0)
+    server_time: str | None = Field(
+        default=None,
+        description="Server clock time for ministry tasks (e.g., '17:09' or '8-12-2025 17:09').",
+    )
     language: Literal["pt", "en"] | None = Field(
         default=None,
         description="Detected language: 'pt' for Portuguese, 'en' for English.",
@@ -37,8 +41,13 @@ class ParsedCommand(BaseModel):
         return timedelta(days=self.days, hours=self.hours, minutes=self.minutes)
 
     def is_zero(self) -> bool:
-        """Check if the duration is zero."""
-        return self.days == 0 and self.hours == 0 and self.minutes == 0
+        """Check if the duration is zero (and no server_time is set)."""
+        return (
+            self.days == 0
+            and self.hours == 0
+            and self.minutes == 0
+            and self.server_time is None
+        )
 
 
 class NLState(BaseModel):
@@ -74,41 +83,49 @@ The bot supports these task kinds (internal values):
 - "build"    → building or construction finishing, upgrades, 'construção'
 - "research" → research tasks or lab upgrades, 'pesquisa'
 - "train"    → troop training, 'treinar', 'treino'
-- "ministry" → ministry / HQ / special building timers, 'ministério'
+- "ministry" → ministry / HQ / special building timers, promotion, 'ministério', 'promovido', 'virar ministro'
 - "custom"   → any other task not clearly in the above categories
 
 You must always output a JSON object that matches the ParsedCommand schema:
 - kind: one of "truck", "build", "research", "train", "ministry", "custom", or null
 - task_name: short label for the task in the user's own words
-- days: non-negative integer
-- hours: non-negative integer
-- minutes: non-negative integer
+- days: non-negative integer (for relative durations)
+- hours: non-negative integer (for relative durations)
+- minutes: non-negative integer (for relative durations)
+- server_time: string with clock time for ministry tasks (e.g., "17:09" or "8-12-2025 17:09"), or null
 - language: "pt" for Portuguese, "en" for English, or null if unsure
 
 INTERPRETATION RULES:
 
-- Focus on how long from NOW until the reminder fires.
-  Examples:
-    - "in 30 minutes" → 0 days, 0 hours, 30 minutes
-    - "em 1 dia e 4 horas" → 1 day, 4 hours, 0 minutes
-    - "em 90 minutos" → 0 days, 1 hour, 30 minutes
-- Ignore seconds.
-- Never produce negative durations.
-- If the total duration is effectively zero, set all components to 0.
+1. MINISTRY TASKS (special handling):
+   When the user mentions ministry/ministério/promotion/promovido with a CLOCK TIME (not duration):
+   - Set kind = "ministry"
+   - Set server_time to the clock time in format "HH:MM" or "D-M-YYYY HH:MM"
+   - Leave days/hours/minutes as 0 (unless "tomorrow" is mentioned, then days=1)
+   Examples:
+     - "I'll be promoted at 17:09" → kind="ministry", server_time="17:09", days=0
+     - "ministry promotion tomorrow at 3:30" → kind="ministry", server_time="3:30", days=1
+     - "ministério às 15:00" → kind="ministry", server_time="15:00", days=0
+     - "promoted at 12:00 tomorrow" → kind="ministry", server_time="12:00", days=1
+     - "vou ser promovido amanhã às 10:00" → kind="ministry", server_time="10:00", days=1
+     - "vou virar ministro às 23:48" → kind="ministry", server_time="23:48", days=0
 
-- Detect the task kind:
-    - If the message clearly mentions truck / caminhão / convoy → "truck"
-    - If it's about construction / prédios / build / upgrade → "build"
-    - If it's about research / laboratório → "research"
-    - If it's about training troops → "train"
-    - If it's about ministry / HQ-like building → "ministry"
-    - Otherwise use "custom"
+2. OTHER TASKS (relative duration):
+   For non-ministry tasks, extract how long from NOW until the reminder fires:
+   - "in 30 minutes" → days=0, hours=0, minutes=30, server_time=null
+   - "em 1 dia e 4 horas" → days=1, hours=4, minutes=0, server_time=null
+   - "em 90 minutos" → days=0, hours=1, minutes=30, server_time=null
 
-- task_name should be a concise label for what the user cares about, e.g.:
-    - "truck arrival"
-    - "caminhão"
-    - "castle build"
-    - "pesquisa de tecnologia"
+3. DETECTING TASK KIND:
+   - truck / caminhão / convoy → "truck"
+   - construction / prédios / build / upgrade → "build"
+   - research / laboratório → "research"
+   - training troops / treinar → "train"
+   - ministry / ministério / promotion / promovido / virar ministro / HQ → "ministry"
+   - Otherwise → "custom"
+
+4. task_name: concise label in user's words, e.g.:
+   - "truck arrival", "ministry promotion", "pesquisa de tecnologia"
 
 LANGUAGE:
 - language = "pt" if the message is mainly Portuguese.
