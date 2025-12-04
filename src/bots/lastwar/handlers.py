@@ -34,11 +34,13 @@ from .conversation.states import (
     ENTERING_CUSTOM_TASK,
     ENTERING_DURATION,
     ENTERING_HEADS_UP,
+    SELECTING_UNSCHEDULE,
 )
 from .messages import Messages, Messenger
 from .models import Kind, ReminderRequest, get_user_context
 from .nl.interpreter import interpret_natural_command
 from .scheduler import (
+    cancel_job,
     cancel_user_jobs,
     format_job_display,
     list_user_jobs,
@@ -65,7 +67,7 @@ async def on_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📝 List", callback_data="lw:list"),
-            InlineKeyboardButton("🗑 Cancel", callback_data="lw:cancel"),
+            InlineKeyboardButton("🗑 Unschedule", callback_data="lw:unschedule"),
         ],
     ]
     messenger = Messenger(context=context)
@@ -105,17 +107,48 @@ async def on_choose(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await messenger.send(update, msg="\n".join(lines))
         return ConversationHandler.END
 
-    if tag == "cancel":
-        await messenger.append_and_close(store_key="menu", append_line="Cancel")
+    if tag == "unschedule":
+        await messenger.append_and_close(store_key="menu", append_line="Unschedule")
         user_id = update.effective_user.id if update.effective_user else 0
         chat_id = update.effective_chat.id if update.effective_chat else 0
-        count = cancel_user_jobs(user_id, chat_id)
-        if count == 0:
-            await messenger.send(update, msg="No reminders to cancel")
-        else:
-            plural = "reminder" if count == 1 else "reminders"
-            await messenger.send(update, msg=f"Cancelled {count} {plural}")
-        return ConversationHandler.END
+        jobs = list_user_jobs(user_id, chat_id)
+
+        if not jobs:
+            await messenger.send(update, msg="No reminders to unschedule")
+            return ConversationHandler.END
+
+        # Store jobs in context for later reference by index
+        context.user_data["lw_unschedule_jobs"] = jobs
+
+        # Build buttons for each reminder
+        buttons = []
+        for i, job in enumerate(jobs, 1):
+            display = format_job_display(job["id"], job["next_run_time"])
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"#{i} {display}", callback_data=f"lw:unsched:{i}"
+                    )
+                ]
+            )
+
+        # Add "Unschedule All" and "Exit" buttons
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "🗑 Unschedule All", callback_data="lw:unsched:all"
+                ),
+                InlineKeyboardButton("❌ Exit", callback_data="lw:unsched:exit"),
+            ]
+        )
+
+        await messenger.send(
+            update,
+            msg="*Select reminder to unschedule:*",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            store_key="unschedule_menu",
+        )
+        return SELECTING_UNSCHEDULE
 
     kind_mapping = {
         "truck": Kind.TRUCK,
@@ -319,9 +352,84 @@ async def on_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if hasattr(context, "user_data") and isinstance(context.user_data, dict):
         context.user_data.pop("lw_ctx", None)
         context.user_data.pop("lw_msgs", None)
+        context.user_data.pop("lw_unschedule_jobs", None)
     if update.message:
         await update.message.reply_text("Cancelled.")
     return ConversationHandler.END
+
+
+async def on_select_unschedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle unschedule selection from the unschedule menu."""
+    query = update.callback_query
+    if not query or not query.data:
+        return ConversationHandler.END
+
+    await query.answer()
+    messenger = Messenger(context=context)
+
+    # Parse the selection: "lw:unsched:1", "lw:unsched:all", or "lw:unsched:exit"
+    parts = query.data.split(":")
+    if len(parts) != 3:
+        return ConversationHandler.END
+
+    selection = parts[2]
+
+    # Handle exit
+    if selection == "exit":
+        await messenger.append_and_close(
+            store_key="unschedule_menu", append_line="Exit"
+        )
+        context.user_data.pop("lw_unschedule_jobs", None)
+        return ConversationHandler.END
+
+    user_id = update.effective_user.id if update.effective_user else 0
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+
+    # Handle unschedule all
+    if selection == "all":
+        await messenger.append_and_close(
+            store_key="unschedule_menu", append_line="Unschedule All"
+        )
+        count = cancel_user_jobs(user_id, chat_id)
+        context.user_data.pop("lw_unschedule_jobs", None)
+        plural = "reminder" if count == 1 else "reminders"
+        await messenger.send(update, msg=f"Unscheduled {count} {plural}")
+        return ConversationHandler.END
+
+    # Handle unschedule by index
+    try:
+        index = int(selection) - 1  # Convert to 0-based index
+        jobs = context.user_data.get("lw_unschedule_jobs", [])
+
+        if index < 0 or index >= len(jobs):
+            await messenger.send(update, msg="Invalid selection")
+            return SELECTING_UNSCHEDULE
+
+        job = jobs[index]
+        job_id = job["id"]
+        display = format_job_display(job_id, job["next_run_time"])
+
+        if cancel_job(job_id):
+            await messenger.append_and_close(
+                store_key="unschedule_menu",
+                append_line=messenger.escape_md_v2(f"#{index + 1}"),
+            )
+            await messenger.send(
+                update, msg=f"Unscheduled: {messenger.escape_md_v2(display)}"
+            )
+        else:
+            await messenger.append_and_close(
+                store_key="unschedule_menu",
+                append_line=messenger.escape_md_v2(f"#{index + 1} (failed)"),
+            )
+            await messenger.send(update, msg="Failed to unschedule reminder")
+
+        context.user_data.pop("lw_unschedule_jobs", None)
+        return ConversationHandler.END
+
+    except ValueError:
+        await messenger.send(update, msg="Invalid selection")
+        return SELECTING_UNSCHEDULE
 
 
 def register(app: Application):
@@ -334,7 +442,9 @@ def register(app: Application):
         entry_points=[CommandHandler("lw", on_start)],
         states={
             CHOOSING: [
-                CallbackQueryHandler(on_choose, pattern=r"^lw:(?!dur:|lead_time:)"),
+                CallbackQueryHandler(
+                    on_choose, pattern=r"^lw:(?!dur:|lead_time:|unsched:)"
+                ),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_natural_command),
             ],
             ENTERING_CUSTOM_TASK: [
@@ -347,6 +457,9 @@ def register(app: Application):
             ENTERING_HEADS_UP: [
                 CallbackQueryHandler(on_enter_heads_up, pattern=r"^lw:lead_time:"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, on_enter_heads_up),
+            ],
+            SELECTING_UNSCHEDULE: [
+                CallbackQueryHandler(on_select_unschedule, pattern=r"^lw:unsched:"),
             ],
         },
         fallbacks=[CommandHandler("cancel", on_cancel)],

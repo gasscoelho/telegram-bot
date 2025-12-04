@@ -490,63 +490,112 @@ async def test_on_choose_list_with_reminders(mock_answer, fake_context, user, ch
 
 @pytest.mark.asyncio
 @patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
-async def test_on_choose_cancel_with_no_reminders(
+async def test_on_choose_unschedule_with_no_reminders(
     mock_answer, fake_context, user, chat
 ):
-    """Test 'cancel' option when there are no reminders to cancel."""
-    with patch("src.bots.lastwar.handlers.cancel_user_jobs") as mock_cancel:
-        mock_cancel.return_value = 0
+    """Test 'unschedule' option when there are no reminders."""
+    with patch("src.bots.lastwar.handlers.list_user_jobs") as mock_list:
+        mock_list.return_value = []
         update = make_callback_query_update(
-            "lw:cancel", user=user, chat=chat, message_text=Messages.WELCOME.value
+            "lw:unschedule", user=user, chat=chat, message_text=Messages.WELCOME.value
         )
         fake_context.bot.send_message = AsyncMock()
 
         next_state = await handlers.on_choose(update, fake_context)
 
         assert next_state == ConversationHandler.END
-        mock_cancel.assert_called_once_with(user.id, chat.id)
+        mock_list.assert_called_once_with(user.id, chat.id)
         fake_context.bot.send_message.assert_called()
         _, kwargs = fake_context.bot.send_message.call_args
-        assert "No reminders to cancel" in kwargs["text"]
+        assert "No reminders to unschedule" in kwargs["text"]
 
 
 @pytest.mark.asyncio
 @patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
-async def test_on_choose_cancel_single_reminder(mock_answer, fake_context, user, chat):
-    """Test 'cancel' option cancels a single reminder."""
-    with patch("src.bots.lastwar.handlers.cancel_user_jobs") as mock_cancel:
-        mock_cancel.return_value = 1
+async def test_on_choose_unschedule_shows_menu(mock_answer, fake_context, user, chat):
+    """Test 'unschedule' option shows menu with reminders."""
+    mock_jobs = [
+        {"id": "lw:42:123:truck:main:1234567890", "next_run_time": datetime.now(UTC)},
+        {"id": "lw:42:123:build:main:1234567891", "next_run_time": datetime.now(UTC)},
+    ]
+    with patch("src.bots.lastwar.handlers.list_user_jobs") as mock_list:
+        mock_list.return_value = mock_jobs
         update = make_callback_query_update(
-            "lw:cancel", user=user, chat=chat, message_text=Messages.WELCOME.value
+            "lw:unschedule", user=user, chat=chat, message_text=Messages.WELCOME.value
         )
         fake_context.bot.send_message = AsyncMock()
 
         next_state = await handlers.on_choose(update, fake_context)
 
-        assert next_state == ConversationHandler.END
-        mock_cancel.assert_called_once_with(user.id, chat.id)
+        assert next_state == states.SELECTING_UNSCHEDULE
+        # Jobs should be stored for later reference
+        assert fake_context.user_data.get("lw_unschedule_jobs") == mock_jobs
         fake_context.bot.send_message.assert_called()
         _, kwargs = fake_context.bot.send_message.call_args
-        assert "Cancelled 1 reminder" in kwargs["text"]
+        assert "Select reminder to unschedule" in kwargs["text"]
+        # Should have inline keyboard with options
+        assert kwargs.get("reply_markup") is not None
 
 
 @pytest.mark.asyncio
 @patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
-async def test_on_choose_cancel_multiple_reminders(
-    mock_answer, fake_context, user, chat
-):
-    """Test 'cancel' option cancels multiple reminders with correct plural."""
+async def test_on_select_unschedule_all(mock_answer, fake_context, user, chat):
+    """Test selecting 'Unschedule All' cancels all reminders."""
     with patch("src.bots.lastwar.handlers.cancel_user_jobs") as mock_cancel:
         mock_cancel.return_value = 3
         update = make_callback_query_update(
-            "lw:cancel", user=user, chat=chat, message_text=Messages.WELCOME.value
+            "lw:unsched:all", user=user, chat=chat, message_text="Select reminder"
         )
         fake_context.bot.send_message = AsyncMock()
 
-        next_state = await handlers.on_choose(update, fake_context)
+        next_state = await handlers.on_select_unschedule(update, fake_context)
 
         assert next_state == ConversationHandler.END
         mock_cancel.assert_called_once_with(user.id, chat.id)
         fake_context.bot.send_message.assert_called()
         _, kwargs = fake_context.bot.send_message.call_args
-        assert "Cancelled 3 reminders" in kwargs["text"]
+        assert "Unscheduled 3 reminders" in kwargs["text"]
+
+
+@pytest.mark.asyncio
+@patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
+async def test_on_select_unschedule_single(mock_answer, fake_context, user, chat):
+    """Test selecting a single reminder to unschedule."""
+    job_id = "lw:42:123:truck:main:1234567890"
+    mock_jobs = [
+        {"id": job_id, "next_run_time": datetime.now(UTC)},
+    ]
+    fake_context.user_data["lw_unschedule_jobs"] = mock_jobs
+
+    with patch("src.bots.lastwar.handlers.cancel_job") as mock_cancel:
+        mock_cancel.return_value = True
+        update = make_callback_query_update(
+            "lw:unsched:1", user=user, chat=chat, message_text="Select reminder"
+        )
+        fake_context.bot.send_message = AsyncMock()
+
+        next_state = await handlers.on_select_unschedule(update, fake_context)
+
+        assert next_state == ConversationHandler.END
+        mock_cancel.assert_called_once_with(job_id)
+        fake_context.bot.send_message.assert_called()
+        _, kwargs = fake_context.bot.send_message.call_args
+        assert "Unscheduled" in kwargs["text"]
+
+
+@pytest.mark.asyncio
+@patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
+async def test_on_select_unschedule_exit(mock_answer, fake_context, user, chat):
+    """Test selecting 'Exit' returns to end without unscheduling."""
+    fake_context.user_data["lw_unschedule_jobs"] = [{"id": "test", "next_run_time": None}]
+
+    update = make_callback_query_update(
+        "lw:unsched:exit", user=user, chat=chat, message_text="Select reminder"
+    )
+    fake_context.bot.send_message = AsyncMock()
+
+    next_state = await handlers.on_select_unschedule(update, fake_context)
+
+    assert next_state == ConversationHandler.END
+    # Jobs should be cleared from context
+    assert fake_context.user_data.get("lw_unschedule_jobs") is None
