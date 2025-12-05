@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from telegram import CallbackQuery, Message
@@ -101,13 +102,13 @@ async def test_on_choose_ministry_transitions_to_server_time(
 
     # Enter server time "17:09" - should calculate duration until that time
     # NOT be treated as 17h 9m duration
-    # Mock datetime.now() to return a fixed time (14:00)
-    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=UTC)
+    # Mock datetime.now() to return a fixed time (14:00 in Brazil timezone)
+
+    brazil_tz = ZoneInfo("America/Sao_Paulo")
+    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=brazil_tz)
     with patch("src.shared.utils.duration.datetime") as mock_datetime:
-        # Mock now() to return mock_now, and astimezone() returns itself
-        mock_now_obj = MagicMock()
-        mock_now_obj.astimezone.return_value = mock_now
-        mock_datetime.now.return_value = mock_now_obj
+        # Mock now(tz) to return mock_now when called with a timezone
+        mock_datetime.now.return_value = mock_now
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
 
         update = make_message_update(
@@ -351,16 +352,16 @@ async def test_natural_language_command(fake_context, user, chat):
 @pytest.mark.asyncio
 async def test_natural_language_ministry_with_server_time(fake_context, user, chat):
     """Test NL ministry input with server_time is converted to duration correctly."""
-    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=UTC)
+
+    brazil_tz = ZoneInfo("America/Sao_Paulo")
+    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=brazil_tz)
 
     with (
         patch("src.bots.lastwar.handlers.interpret_natural_command") as mock_interpret,
         patch("src.shared.utils.duration.datetime") as mock_datetime,
     ):
-        # Mock now() to return mock_now, and astimezone() returns itself
-        mock_now_obj = MagicMock()
-        mock_now_obj.astimezone.return_value = mock_now
-        mock_datetime.now.return_value = mock_now_obj
+        # Mock now(tz) to return mock_now when called with a timezone
+        mock_datetime.now.return_value = mock_now
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
 
         # Simulate LLM returning server_time for ministry
@@ -391,16 +392,16 @@ async def test_natural_language_ministry_with_server_time(fake_context, user, ch
 @pytest.mark.asyncio
 async def test_natural_language_ministry_tomorrow(fake_context, user, chat):
     """Test NL ministry with 'tomorrow' adds extra day to duration."""
-    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=UTC)
+
+    brazil_tz = ZoneInfo("America/Sao_Paulo")
+    mock_now = datetime(2025, 12, 3, 14, 0, 0, tzinfo=brazil_tz)
 
     with (
         patch("src.bots.lastwar.handlers.interpret_natural_command") as mock_interpret,
         patch("src.shared.utils.duration.datetime") as mock_datetime,
     ):
-        # Mock now() to return mock_now, and astimezone() returns itself
-        mock_now_obj = MagicMock()
-        mock_now_obj.astimezone.return_value = mock_now
-        mock_datetime.now.return_value = mock_now_obj
+        # Mock now(tz) to return mock_now when called with a timezone
+        mock_datetime.now.return_value = mock_now
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
 
         # LLM sets days=1 for "tomorrow"
@@ -587,7 +588,9 @@ async def test_on_select_unschedule_single(mock_answer, fake_context, user, chat
 @patch.object(CallbackQuery, "answer", new_callable=AsyncMock)
 async def test_on_select_unschedule_exit(mock_answer, fake_context, user, chat):
     """Test selecting 'Exit' returns to end without unscheduling."""
-    fake_context.user_data["lw_unschedule_jobs"] = [{"id": "test", "next_run_time": None}]
+    fake_context.user_data["lw_unschedule_jobs"] = [
+        {"id": "test", "next_run_time": None}
+    ]
 
     update = make_callback_query_update(
         "lw:unsched:exit", user=user, chat=chat, message_text="Select reminder"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 __all__ = [
     "parse_duration",
@@ -150,8 +151,8 @@ def parse_server_time_to_duration(
         raise ValueError(f"Invalid time values: {hour}:{minute}")
 
     if now is None:
-        # Use local time since server time is typically in local timezone
-        now = datetime.now().astimezone()
+        # Use game server timezone (Brazil) for interpreting clock times
+        now = datetime.now(ZoneInfo("America/Sao_Paulo"))
 
     # If date is provided, use it; otherwise use today/tomorrow
     if match.group("year"):

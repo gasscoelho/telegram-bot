@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -125,27 +126,28 @@ def test_parse_server_time_valid(server_time, now, expected):
     assert parse_server_time_to_duration(server_time, now=now) == expected
 
 
-def test_parse_server_time_uses_local_time_by_default():
-    """Ensure parse_server_time_to_duration uses local time, not UTC.
+def test_parse_server_time_uses_brazil_timezone_by_default():
+    """Ensure parse_server_time_to_duration uses Brazil timezone (America/Sao_Paulo).
 
     This is a regression test. If someone says "virar ministro às 10:00"
-    and it's currently 9:00 local time, the duration should be ~1 hour,
-    not 10+ hours (which would happen if UTC was used incorrectly).
+    and it's currently 9:00 in Brazil, the duration should be ~1 hour,
+    regardless of where the bot is running (local machine or UTC cloud server).
     """
-    # Get current local time
-    local_now = datetime.now().astimezone()
 
-    # Target: 30 minutes from now (in local time)
-    target_time = local_now + timedelta(minutes=30)
+    # Get current time in Brazil timezone
+    brazil_now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+
+    # Target: 30 minutes from now (in Brazil time)
+    target_time = brazil_now + timedelta(minutes=30)
     target_str = target_time.strftime("%H:%M")
 
-    # Call without passing `now` - should use local time internally
+    # Call without passing `now` - should use Brazil timezone internally
     result = parse_server_time_to_duration(target_str)
 
     # Duration should be approximately 30 minutes (with some tolerance for test execution time)
     assert timedelta(minutes=29) <= result <= timedelta(minutes=31), (
-        f"Server time '{target_str}' should be ~30 min from now. "
-        f"Got {result}. This may indicate UTC is being used instead of local time."
+        f"Server time '{target_str}' should be ~30 min from now in Brazil timezone. "
+        f"Got {result}. This may indicate wrong timezone is being used."
     )
 
 
